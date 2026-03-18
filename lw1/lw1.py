@@ -1,6 +1,7 @@
 # %%
 # Load data
 
+from selectors import BaseSelector
 import pandas as pd
 import numpy  as np
 
@@ -17,13 +18,24 @@ for c in df.columns:
             if isinstance(x, str) and '/' in str(x)
             else np.float64(x)
     )
-df
+print(df)
 
 # %%
 # Split DataFrame to logical blocks
 
 import seaborn as sns
 
+
+# Use abs to move all points in positive quadrant
+params_df = df.loc[['a', 'b']].abs()
+
+# Add a+b to params DataFrame
+a_plus_b_row = pd.DataFrame(index=['a+b'], data=[params_df.loc['a'] + params_df.loc['b']])
+params_df = pd.concat([params_df, a_plus_b_row])
+
+print(params_df)
+
+# %%
 
 QUADRANTS_MULTIPLIERS = {
     1: ( 1,  1,  1),
@@ -36,8 +48,6 @@ QUADRANTS_MULTIPLIERS = {
     # 8: ( 1, -1, -1)
 }
 
-params_df = df.loc[['a', 'b']]
-
 initial_points_df = df.loc[['v1', 'v2', 'v3', 'v4', 'v5', 'v6']]
 
 points_labels = []
@@ -48,7 +58,7 @@ for quadrant_num, (sign_x, sign_y, sign_z) in QUADRANTS_MULTIPLIERS.items():
     for label in initial_points_df.index:
         x, y, z = initial_points_df.loc[label]
 
-        points_labels.append(f"v{point_number}")
+        points_labels.append(f"{point_number}")
         point_number += 1
 
         points_data.append((
@@ -62,10 +72,19 @@ points_df = pd.DataFrame(
     columns=initial_points_df.columns,
     index=points_labels
 )
-points_df.describe()
+
+print(points_df.head())
 
 # %%
 # Get all surfaces of polyhedron
+
+# Surface settings for each quadrant
+SURFACES = {
+    1: (1, 2, 3),
+    2: (1, 2, 4),
+    3: (1, 3, 5),
+    4: (2, 3, 6)
+}
 
 def get_surface_equasion(p1, p2, p3):
     """Calculates coefficients of surface equasion by three points in R^3.
@@ -90,13 +109,6 @@ def get_surface_equasion(p1, p2, p3):
 
     return A, B, C, D
 
-# Surface settings for each quadrant
-SURFACES = {
-    1: (1, 2, 3),
-    2: (1, 2, 4),
-    3: (1, 3, 5),
-    4: (2, 3, 6)
-}
 
 surfaces_labels = []
 surfaces_data = []
@@ -105,79 +117,90 @@ surface_number = 1
 for i in range(0, len(points_df), len(initial_points_df)):
 
     for j, value in enumerate(SURFACES.values()):
-        surfaces_labels.append(f"s{surface_number}")
+        surfaces_labels.append(surface_number)
         surface_number += 1
-        # -1 because indexing of values started from 1
         surfaces_data.append((
-            points_data[(i + value[0] - 1)],
-            points_data[(i + value[1] - 1)],
-            points_data[(i + value[2] - 1)]
+            str(i + value[0]),
+            str(i + value[1]),
+            str(i + value[2])
         ))
 
 surfaces_df = pd.DataFrame(
     surfaces_data,
-    columns=['point1', 'point2', 'point3'],
+    columns=['p1', 'p2', 'p3'],
     index=surfaces_labels
 )
-surfaces_df.describe()
+surfaces_df.head(32)
 
 # %%
 # Get all unique points
 
-points_df.drop_duplicates(inplace=True)
-points_df.describe()
+unique_points_df = points_df.drop_duplicates()
+unique_points_df.head()
 
 # %%
 # Plot polyhedron
 
 import matplotlib.pyplot as plt
 
+from mpl_toolkits.mplot3d import proj3d
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+
+def get_visible_faces(ax, vertices_df, faces_df):
+    visible_faces = []
+    for idx, points in faces_df.iterrows():
+
+        verts = np.array([
+            vertices_df.loc[points['p1']],
+            vertices_df.loc[points['p2']],
+            vertices_df.loc[points['p3']]
+        ])
+
+        # project vertices to 2D screen space
+        xs, ys, zs = proj3d.proj_transform(
+            verts[:,0], verts[:,1], verts[:,2], ax.get_proj()
+        )
+
+        p1 = np.array([xs[0], ys[0]])
+        p2 = np.array([xs[1], ys[1]])
+        p3 = np.array([xs[2], ys[2]])
+
+        # compute signed area in screen space
+        v1 = p2 - p1
+        v2 = p3 - p1
+
+        cross = v1[0]*v2[1] - v1[1]*v2[0]
+
+        if cross < 0:   # orientation depends on vertex ordering
+            visible_faces.append(idx)
+
+    return visible_faces
 
 
 fig = plt.figure(figsize=(12, 8))
 ax = fig.add_subplot(111, projection='3d')
+ax.view_init(elev=20, azim=40)
 
 surfaces_colors = sns.color_palette("Set1", len(SURFACES))
 
-centroids = []
 
 # Plot surfaces
 for surface_name, row in surfaces_df.iterrows():
 
     vertices = np.array([
-        row['point1'],
-        row['point2'],
-        row['point3'],
+        points_df.loc[row['p1']],
+        points_df.loc[row['p2']],
+        points_df.loc[row['p3']],
     ])
-
-
-    # Add surface labels at centroids
-    centroids.append((surface_name, np.mean(vertices, axis=0)))
 
     ax.add_collection3d(
         Poly3DCollection(
             [vertices],
-            alpha=0.7,
-            facecolor=surfaces_colors[int(surface_name[1:]) % len(surfaces_colors)],
+            alpha=0.8,
+            facecolor=surfaces_colors[int(surface_name) % len(surfaces_colors)],
             edgecolor='black',
-            label=surface_name
         )
-    )
-
-for surface_name, centroid in centroids:
-    ax.text(centroid[0], centroid[1], centroid[2],
-        f'  {surface_name}  ',
-        fontsize=10, fontweight='bold',
-        ha='center', va='center',
-        bbox=dict(
-            boxstyle='square',
-            facecolor='white',
-            alpha=0.9,
-            edgecolor='black',
-            linewidth=2
-        ),
-        zorder=100
     )
 
 # Plot each point with its label
@@ -192,23 +215,47 @@ ax.scatter(
     edgecolors='black'
 )
 
-for idx, row in points_df.iterrows():
-    ax.text(
-        row['x'],
-        row['y'],
-        row['z'],
-        idx,
-        fontsize=8,
-        color='black',
-        ha='center',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
-        zorder=100,
+# <TODO> Plot surface labels only for visible ones
+# print(len(get_visible_faces(ax, points_df, surfaces_df)))
+# for surface_name in get_visible_faces(ax, points_df, surfaces_df):
+for surface_name in surfaces_df.index:
+    points = surfaces_df.loc[surface_name]
+    centroid = np.mean([points_df.loc[p] for p in points], axis=0)
+
+    points = [
+        points_df.loc[p] for p in surfaces_df.loc[surface_name]
+    ]
+    centroid = np.mean(points, axis=0)
+    ax.text(centroid[0], centroid[1], centroid[2],
+        f'  {surface_name}  ',
+        fontsize=8, fontweight='bold',
+        ha='center', va='center',
+        bbox=dict(
+            boxstyle='square',
+            facecolor='white',
+            alpha=0.9,
+            edgecolor='black',
+            linewidth=1
+        ),
+        zorder=100
     )
+    for point in points:
+        ax.text(
+            point['x'],
+            point['y'],
+            point['z'],
+            point.name,
+            fontsize=8,
+            color='black',
+            ha='center',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
+            zorder=100,
+        )
+
 
 ax.set_xlabel('X')
 ax.set_ylabel('Y')
 ax.set_zlabel('Z')
-ax.view_init(elev=20, azim=40)
 plt.tight_layout()
 plt.show()
 
@@ -239,9 +286,9 @@ surface_equasions = []
 
 for idx, row in surfaces_df.iterrows():
     A, B, C, D = get_surface_equasion(
-        row['point1'],
-        row['point2'],
-        row['point3'],
+        points_df.loc[row['p1']],
+        points_df.loc[row['p2']],
+        points_df.loc[row['p3']],
     )
     surface_equasions.append((A, B, C, D))
 
@@ -255,6 +302,7 @@ for A, B, C, D in surface_equasions:
             point['y'],
             point['z'],
         )
+        print(A * point['x'] + B * point['y'] + C * point['z'] + D)
 
         if new_sign != 0:
             if sign is not None and new_sign != sign:
@@ -266,3 +314,69 @@ for A, B, C, D in surface_equasions:
         print(f"All points are on same half of space for: ({A})x + ({B})y + ({C})z + ({D})")
         continue
     break
+
+# %%
+# Calculate orthonorm base for each face
+
+from fractions import Fraction
+
+
+def calculate_orthonorm_base(a1, a2, a3):
+    B1 = np.cross(a2, a3)
+    B2 = np.cross(a1, a3)
+    B3 = np.cross(a1, a2)
+
+    b1 = B1 / np.dot(B1, a1)
+    b2 = B2 / np.dot(B2, a2)
+    b3 = B3 / np.dot(B3, a3)
+    return [b1, b2, b3]
+
+bases = []
+for idx, row in surfaces_df.iterrows():
+    a1 = points_df.loc[row['p1']]
+    a2 = points_df.loc[row['p2']]
+    a3 = points_df.loc[row['p3']]
+
+    base = calculate_orthonorm_base(a1, a2, a3)
+    bases.append(base)
+
+bases = pd.DataFrame(
+    bases,
+    columns=range(1, len(bases[0]) + 1),
+    index=surfaces_df.index
+)
+print(bases.head())
+
+# %%
+# Pretty print calculated base to use it in report
+
+from fractions import Fraction
+
+
+for idx, base in bases.iterrows():
+    pretty_base = []
+    print(f"base for surface with idx={idx}:")
+    for i, v in enumerate(base):
+        print(
+            [str(Fraction(x).limit_denominator()) for x in v]
+        )
+
+# %%
+# Calculate coords in orthonorm bases
+
+for base_idx, base in bases.iterrows():
+    for param_idx, param in params_df.iterrows():
+        new_coords = []
+        for v in base:
+            new_coord = np.dot(param, v)
+            if (new_coord < 0):
+                break
+            new_coords.append(new_coord)
+        else:
+            # Print result and calculate norm
+            print(f"calculate new coords for {param_idx} in surface {base_idx} base")
+            print(f"new_coords={new_coords}")
+            print(f"pretty_new_coords={[str(Fraction(x).limit_denominator()) for x in new_coords]}")
+            print(f"norm={np.sum(new_coords)}")
+            print(f"pretty_norm={Fraction(np.sum(new_coords)).limit_denominator()}")
+            print()
